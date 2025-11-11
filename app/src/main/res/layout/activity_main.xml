@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/main"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context=".MainActivity"
+    android:orientation="vertical">
+
+    <EditText
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:id="@+id/targetPin"
+        android:hint="Enter target PIN"
+        />
+
+    <EditText
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:id="@+id/searchQuery"
+        android:hint="Enter trxId"
+        />
+
+    <Button
+        android:id="@+id/openBkash"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Open bKash"
+        />
+
+
+    <Button
+        android:id="@+id/openBkashSendMoney"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Open bKash Send money"
+        />
+</LinearLayout>

@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Accessibility Master</string>
+
+    <string name="accessibility_service_description">bKash automation service</string>
+</resources>
