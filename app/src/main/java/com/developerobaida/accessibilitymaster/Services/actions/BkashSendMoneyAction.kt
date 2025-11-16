@@ -5,20 +5,14 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import com.developerobaida.accessibilitymaster.Services.ScannerHelper
 import com.developerobaida.accessibilitymaster.Services.ScanUIService
-import kotlin.text.RegexOption
 import java.util.concurrent.CountDownLatch
+import kotlin.text.RegexOption
 import java.util.concurrent.TimeUnit
 
-/**
- * BkashSendMoneyAction — FIXED VERSION with improved long-press handling
- * Works on bKash v5.9.2+ with better gesture recognition
- */
 object BkashSendMoneyAction : ServiceAction {
 
     private const val TAG = "BKASH_SEND"
@@ -123,57 +117,78 @@ object BkashSendMoneyAction : ServiceAction {
                         val desc = (n.contentDescription ?: "").toString()
                         val txt  = (n.text ?: "").toString()
                         val cls  = n.className?.toString() ?: ""
-                        (desc.contains("সেন্ড মানি করতে", true) ||
-                                desc.contains("ট্যাপ করে ধরে রাখুন", true) ||
-                                txt.contains("সেন্ড মানি করতে", true)) &&
+                        // ONLY trigger long-press when exact/helpful descriptive text appears
+                        val shouldMatch = desc.contains("সেন্ড মানি করতে", true) || txt.contains("সেন্ড মানি করতে", true)
+                        (shouldMatch || desc.contains("ট্যাপ করে ধরে রাখুন", true) || txt.contains("ট্যাপ করে ধরে রাখুন", true)) &&
                                 (n.isClickable || n.isLongClickable || cls.contains("View", true) || cls.contains("Frame", true))
                     } catch (_: Throwable) { false }
                 }
 
-                // ---- 2. Try exhaustive long-press -------------------------------------------------
+                // ---- 2. Try node-based long-press (only if description matches target text exactly) ----
                 var gestureOk = false
                 if (pinkBanner != null) {
-                    // get node bounds & compute center
-                    val r = Rect()
-                    try { pinkBanner.getBoundsInScreen(r) } catch (_: Throwable) { /* ignore */ }
-                    if (!r.isEmpty) {
-                        val cx = (r.left + r.right) / 2f
-                        val cy = (r.top + r.bottom) / 2f
+                    val desc = (pinkBanner.contentDescription ?: "").toString()
+                    val txt  = (pinkBanner.text ?: "").toString()
+                    val matchesExact = desc.contains("সেন্ড মানি করতে ট্যাপ করে ধরে রাখুন", true) ||
+                            txt.contains("সেন্ড মানি করতে ট্যাপ করে ধরে রাখুন", true)
 
-                        Log.d(TAG, "Trying exhaustive long-press at center ($cx,$cy)")
+                    if (matchesExact) {
+                        val r = Rect()
+                        try { pinkBanner.getBoundsInScreen(r) } catch (_: Throwable) { /* ignore */ }
+                        if (!r.isEmpty) {
+                            val cx = (r.left + r.right) / 2f
+                            val cy = (r.top + r.bottom) / 2f
 
-                        // Try exhaustive approach for better recognition
-                        try {
-                            // First, try to focus on the element
-                            pinkBanner.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-                            service.waitMs(100)
+                            Log.d(TAG, "Trying node-centered long-press at center ($cx,$cy) for exact match")
 
-                            // Then perform the exhaustive long-press
-                            if (performExhaustiveLongPress(service, pinkBanner)) {
-                                Log.d(TAG, "Exhaustive long-press succeeded (node)")
-                                gestureOk = true
-                            }
-                        } catch (_: Throwable) {}
+                            try {
+                                // Focus to improve recognition
+                                pinkBanner.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                                service.waitMs(100)
+
+                                gestureOk = performExhaustiveLongPress(service, pinkBanner)
+                                Log.d(TAG, "Node-based long-press result -> $gestureOk")
+                            } catch (_: Throwable) {}
+                        } else {
+                            Log.d(TAG, "Pink banner bounds empty — skipping node-centered long-press")
+                        }
+                    } else {
+                        Log.d(TAG, "Pink banner found but text doesn't match exact trigger; skipping node long-press. desc='$desc' txt='$txt'")
                     }
+                } else {
+                    Log.d(TAG, "Pink banner node not found")
                 }
 
-                // 3. If node-based approach failed, try screen-based approach
+                // 3. If node-based approach failed, try screen-based approach only if pink-banner text matched exact string earlier
                 if (!gestureOk) {
-                    Log.d(TAG, "Node-based long-press failed — trying screen-based approach")
-                    val acc = try { service as AccessibilityService } catch (_: Throwable) { null }
-                    if (acc != null) {
-                        val dm = acc.resources.displayMetrics
-                        val w = dm.widthPixels.toFloat()
-                        val h = dm.heightPixels.toFloat()
-                        val targetX = w / 2f
-                        val targetY = h * 0.88f
-
+                    // attempt to find any node that contains exact text to allow screen-based approach
+                    val anyMatchNode = service.findFirst(newRoot) { n ->
                         try {
-                            if (performExhaustiveLongPress(service, null, targetX, targetY)) {
-                                Log.d(TAG, "Exhaustive screen-based long-press succeeded")
-                                gestureOk = true
-                            }
-                        } catch (_: Throwable) {}
+                            val d = (n.contentDescription ?: "").toString()
+                            val t = (n.text ?: "").toString()
+                            d.contains("সেন্ড মানি করতে ট্যাপ করে ধরে রাখুন", true) || t.contains("সেন্ড মানি করতে ট্যাপ করে ধরে রাখুন", true)
+                        } catch (_: Throwable) { false }
+                    }
+
+                    if (anyMatchNode != null) {
+                        Log.d(TAG, "Exact text found elsewhere — attempting screen-based long-press")
+                        val acc = try { service as AccessibilityService } catch (_: Throwable) { null }
+                        if (acc != null) {
+                            val dm = acc.resources.displayMetrics
+                            val w = dm.widthPixels.toFloat()
+                            val h = dm.heightPixels.toFloat()
+                            val targetX = w / 2f
+                            val targetY = h * 0.88f
+
+                            try {
+                                gestureOk = performExhaustiveLongPress(service, null, targetX, targetY)
+                                Log.d(TAG, "Screen-based long-press result -> $gestureOk")
+                            } catch (_: Throwable) {}
+                        } else {
+                            Log.w(TAG, "Cannot cast service to AccessibilityService for screen-based gesture")
+                        }
+                    } else {
+                        Log.d(TAG, "Did not find exact text anywhere — skipping screen-based long-press")
                     }
                 }
 
@@ -190,13 +205,13 @@ object BkashSendMoneyAction : ServiceAction {
                         Log.d(TAG, "Search field NOT found after long-press")
                     }
                 } else {
-                    Log.w(TAG, "All long-press attempts FAILED")
+                    Log.w(TAG, "All long-press attempts FAILED or were skipped")
                 }
 
                 // ---- 4. Debug dump -------------------------------------------------
                 logNodeTree(newRoot, 0)
                 dumpClickableNodesBounds(service)
-                logNodesAtBottom(service)
+                //logNodesAtBottom(service)
                 return true
             }
 
@@ -207,17 +222,29 @@ object BkashSendMoneyAction : ServiceAction {
             }
 
             val existingText = (searchField.text ?: "").toString()
+            // If search field doesn't already contain recipient, type it
             if (!existingText.contains(recipient)) {
                 focusAndTypeIntoNode(searchField, recipient, service)
+                // DO NOT return immediately — let UI update and then try explicit Next click
                 service.waitMs(300)
-                return true
+                // After typing, try clicking Next if present
+                val afterTypingRoot = service.rootInActiveWindow ?: rootNode
+                val clickedNextAfterTyping = clickNextButtonIfPresent(afterTypingRoot, service)
+                if (clickedNextAfterTyping) {
+                    Log.d(TAG, "Clicked Next after typing recipient")
+                    service.waitMs(400)
+                    return true
+                }
+                // else continue to suggestion detection below
             }
 
+            // If search field already contains recipient or we typed and Next not found, try suggestions
             val clickedSuggestion = clickBestContactSuggestion(newRoot, recipient, service)
             if (clickedSuggestion) {
                 service.waitMs(400)
                 return true
             } else {
+                // final attempt: click Next button explicitly (maybe visible now)
                 val nextClicked = clickNextButtonIfPresent(newRoot, service)
                 if (nextClicked) {
                     service.waitMs(400)
@@ -253,7 +280,9 @@ object BkashSendMoneyAction : ServiceAction {
                     val cls = n.className?.toString() ?: ""
                     val desc = (n.contentDescription ?: "").toString()
                     val txt = (n.text ?: "").toString()
-                    n.isClickable && (desc.contains(checkPart, true) || txt.contains(checkPart, true)) &&
+                    // Never treat EditText as a suggestion
+                    val isEdit = cls.contains("EditText", true) || cls.contains("android.widget.EditText", true)
+                    !isEdit && n.isClickable && (desc.contains(checkPart, true) || txt.contains(checkPart, true)) &&
                             (cls.contains("View", true) || cls.contains("ImageView", true) || cls.contains("LinearLayout", true) || cls.contains("RelativeLayout", true))
                 } catch (_: Throwable) { false }
             }
@@ -264,11 +293,14 @@ object BkashSendMoneyAction : ServiceAction {
                 return clicked
             }
 
+            // Fallback: find any clickable/focusable result that contains last 4 digits but exclude EditText nodes
             val firstResult = service.findFirst(root) { n ->
                 try {
+                    val cls = n.className?.toString() ?: ""
                     val descR = (n.contentDescription ?: "").toString()
                     val txtR = (n.text ?: "").toString()
-                    (descR.contains(recipient.takeLast(4), true) || txtR.contains(recipient.takeLast(4), true)) && (n.isClickable || n.isFocusable)
+                    val isEdit = cls.contains("EditText", true) || cls.contains("android.widget.EditText", true)
+                    ( (descR.contains(recipient.takeLast(4), true) || txtR.contains(recipient.takeLast(4), true)) && (n.isClickable || n.isFocusable) && !isEdit )
                 } catch (_: Throwable) { false }
             }
             if (firstResult != null) {
@@ -276,7 +308,7 @@ object BkashSendMoneyAction : ServiceAction {
                 Log.d(TAG, "Clicked first result fallback -> clicked=$clickedFirst text='${firstResult.text}' desc='${firstResult.contentDescription}'")
                 return clickedFirst
             }
-            Log.d(TAG, "No contact suggestion or first result matched")
+            Log.d(TAG, "No contact suggestion or first result matched (non-Edit fallback)")
             return false
         } catch (t: Throwable) {
             Log.w(TAG, "clickBestContactSuggestion failed: ${t.message}", t)
@@ -685,6 +717,340 @@ object BkashSendMoneyAction : ServiceAction {
         }
     }
 
+    // ---------- click confirm number ----------
+    private fun clickConfirmNumberIfPresent(root: AccessibilityNodeInfo?, service: ScanUIService): Boolean {
+        if (root == null) return false
+        try {
+            val exactRegex = Regex("হ্যাঁ\\s*,?\\s*নাম্বারটি\\s*সঠিক", RegexOption.IGNORE_CASE)
+            var node: AccessibilityNodeInfo? = service.findByDesc(root, exactRegex)
+
+            if (node == null) {
+                node = service.findFirst(root) { n ->
+                    try {
+                        val d = (n.contentDescription ?: "").toString()
+                        val t = (n.text ?: "").toString()
+                        val combined = (d + " " + t)
+                        combined.contains("হ্যাঁ", true) && combined.contains("নাম্বার", true) && combined.contains("সঠিক", true)
+                    } catch (_: Throwable) { false }
+                }
+            }
+
+            if (node == null) {
+                Log.d(TAG, "Confirmation node ('হ্যাঁ, নাম্বারটি সঠিক') not found on this root")
+                return false
+            }
+
+            Log.d(TAG, "clickConfirmNumberIfPresent: found candidate class=${node.className} text='${node.text}' desc='${node.contentDescription}'")
+
+            // Try clickSelfOrAncestor
+            val clicked = service.clickSelfOrAncestor(node, 6)
+            if (clicked) {
+                Log.d(TAG, "Clicked confirm-number via clickSelfOrAncestor")
+                service.waitMs(450)
+                val after = service.rootInActiveWindow
+                if (after != null) { logNodeTree(after, 0); logCandidateTilesForDebug(after, service) }
+                return true
+            }
+
+            // Direct performAction
+            val direct = try { node.performAction(AccessibilityNodeInfo.ACTION_CLICK) } catch (_: Throwable) { false }
+            if (direct) {
+                Log.d(TAG, "Clicked confirm-number via node.performAction")
+                service.waitMs(450)
+                val after = service.rootInActiveWindow
+                if (after != null) { logNodeTree(after, 0); logCandidateTilesForDebug(after, service) }
+                return true
+            }
+
+            // Click clickable ancestor
+            var cur: AccessibilityNodeInfo? = node
+            var hops = 0
+            while (cur != null && hops < 8) {
+                if (cur.isClickable && cur.isEnabled) {
+                    val pClick = try { cur.performAction(AccessibilityNodeInfo.ACTION_CLICK) } catch (_: Throwable) { false }
+                    Log.d(TAG, "Attempted click on ancestor hop=$hops -> result=$pClick")
+                    if (pClick) {
+                        service.waitMs(450)
+                        val after = service.rootInActiveWindow
+                        if (after != null) { logNodeTree(after, 0); logCandidateTilesForDebug(after, service) }
+                        return true
+                    }
+                }
+                cur = cur.parent
+                hops++
+            }
+
+            // Fallback to exact desc match search+click
+            val alt = service.findFirst(root) { n ->
+                try {
+                    val d = (n.contentDescription ?: "").toString()
+                    d.equals("হ্যাঁ, নাম্বারটি সঠিক", true) || d.equals("হ্যাঁ নাম্বারটি সঠিক", true)
+                } catch (_: Throwable) { false }
+            }
+            if (alt != null) {
+                val altClicked = service.clickSelfOrAncestor(alt, 6)
+                if (altClicked) {
+                    Log.d(TAG, "Clicked confirm-number via alt exact match")
+                    service.waitMs(450)
+                    return true
+                }
+            }
+
+            Log.w(TAG, "Failed to click confirmation node even though it was found")
+            return false
+        } catch (t: Throwable) {
+            Log.w(TAG, "clickConfirmNumberIfPresent failed: ${t.message}", t)
+            return false
+        }
+    }
+
+    private fun findSearchField(newRoot: AccessibilityNodeInfo, service: ScanUIService): AccessibilityNodeInfo? {
+        var searchField: AccessibilityNodeInfo? = service.findFirst(newRoot) { n ->
+            try {
+                val cls = n.className?.toString() ?: ""
+                if (!cls.contains("EditText", true)) return@findFirst false
+                val hint = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) (n.hintText ?: "") else "")?.toString() ?: ""
+                val desc = (n.contentDescription ?: "").toString()
+                val text = (n.text ?: "").toString()
+                (hint.contains("নাম", true) || hint.contains("নাম্বার", true)
+                        || desc.contains("নাম", true) || desc.contains("নাম্বার", true)
+                        || text.contains("নাম", true) || text.contains("নাম্বার", true))
+            } catch (_: Throwable) { false }
+        }
+        if (searchField == null) {
+            searchField = service.findFirst(newRoot) { n ->
+                try {
+                    val id = try { n.viewIdResourceName ?: "" } catch (_: Throwable) { "" }
+                    val cls = n.className?.toString() ?: ""
+                    (cls.contains("EditText", true) && (id.contains("search", true) || id.contains("name", true) || id.contains("number", true)))
+                } catch (_: Throwable) { false }
+            }
+        }
+        if (searchField == null) {
+            searchField = service.findFirst(newRoot) { it.className?.contains("EditText", true) == true }
+        }
+        return searchField
+    }
+
+    // ---------- long-press helpers (new) ----------
+    /**
+     * Attempt a long-press either on a node (if provided) or at screen coordinates (if x/y provided).
+     * Returns true if dispatchGesture reported completion within timeout.
+     */
+    private fun performExhaustiveLongPress(service: ScanUIService, node: AccessibilityNodeInfo?, x: Float? = null, y: Float? = null): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            Log.w(TAG, "performExhaustiveLongPress: API < N, cannot dispatchGesture")
+            return false
+        }
+
+        val accService = try { service as AccessibilityService } catch (_: Throwable) { null }
+        if (accService == null) {
+            Log.w(TAG, "performExhaustiveLongPress: service is not AccessibilityService")
+            return false
+        }
+
+        val (cx, cy) = if (node != null) {
+            val r = Rect()
+            try { node.getBoundsInScreen(r) } catch (_: Throwable) { }
+            if (r.isEmpty) {
+                if (x != null && y != null) Pair(x, y) else return false
+            } else {
+                Pair((r.left + r.right) / 2f, (r.top + r.bottom) / 2f)
+            }
+        } else {
+            if (x != null && y != null) Pair(x, y) else return false
+        }
+
+        // build a path that presses at (cx,cy) and holds for duration
+        try {
+            val path = Path().apply { moveTo(cx, cy) }
+            val duration = 650L
+            val stroke = GestureDescription.StrokeDescription(path, 0, duration)
+            val gd = GestureDescription.Builder().addStroke(stroke).build()
+
+            val latch = CountDownLatch(1)
+            var success = false
+
+            val callback = object : AccessibilityService.GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    super.onCompleted(gestureDescription)
+                    success = true
+                    latch.countDown()
+                }
+
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    super.onCancelled(gestureDescription)
+                    success = false
+                    latch.countDown()
+                }
+            }
+
+            val posted = accService.dispatchGesture(gd, callback, null)
+            if (!posted) {
+                Log.w(TAG, "performExhaustiveLongPress: dispatchGesture returned false immediately")
+                return false
+            }
+
+            // wait up to 1200ms for completion
+            try {
+                val awaited = latch.await(1200L, TimeUnit.MILLISECONDS)
+                if (!awaited) {
+                    Log.w(TAG, "performExhaustiveLongPress: timeout waiting for gesture completion")
+                }
+            } catch (ie: InterruptedException) {
+                Log.w(TAG, "performExhaustiveLongPress: interrupted while waiting", ie)
+            }
+
+            return success
+        } catch (t: Throwable) {
+            Log.w(TAG, "performExhaustiveLongPress failed: ${t.message}", t)
+            return false
+        }
+    }
+
+    // ---------- tap-at-bounds fallback ----------
+    private fun performTapAtBounds(service: ScanUIService, node: AccessibilityNodeInfo): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            // can't dispatch gesture; try performAction on node or ancestor
+            val direct = try { node.performAction(AccessibilityNodeInfo.ACTION_CLICK) } catch (_: Throwable) { false }
+            if (direct) return true
+            var p = node.parent
+            var hops = 0
+            while (p != null && hops < 8) {
+                val pc = try { p.performAction(AccessibilityNodeInfo.ACTION_CLICK) } catch (_: Throwable) { false }
+                if (pc) return true
+                p = p.parent; hops++
+            }
+            return false
+        }
+
+        val accService = try { service as AccessibilityService } catch (_: Throwable) { null } ?: return false
+        val r = Rect()
+        try { node.getBoundsInScreen(r) } catch (_: Throwable) { /* ignore */ }
+        if (r.isEmpty) return false
+        val cx = (r.left + r.right) / 2f
+        val cy = (r.top + r.bottom) / 2f
+
+        try {
+            val path = Path().apply { moveTo(cx, cy) }
+            val stroke = GestureDescription.StrokeDescription(path, 0, 50)
+            val gd = GestureDescription.Builder().addStroke(stroke).build()
+
+            val latch = CountDownLatch(1)
+            var success = false
+            val cb = object : AccessibilityService.GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    success = true
+                    latch.countDown()
+                }
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    success = false
+                    latch.countDown()
+                }
+            }
+            val posted = accService.dispatchGesture(gd, cb, null)
+            if (!posted) return false
+            latch.await(600, TimeUnit.MILLISECONDS)
+            return success
+        } catch (t: Throwable) {
+            Log.w(TAG, "performTapAtBounds failed: ${t.message}", t)
+            return false
+        }
+    }
+
+    // ---------- click Next button (improved) ----------
+    private fun clickNextButtonIfPresent(root: AccessibilityNodeInfo, service: ScanUIService): Boolean {
+        try {
+            // 1) Prefer exact description match (full phrase)
+            var nextBtn: AccessibilityNodeInfo? = service.findByDesc(root, Regex("^পরের\\s*ধাপে\\s*যেতে\\s*ট্যাপ\\s*করুন\$", RegexOption.IGNORE_CASE))
+
+            // 2) If not found, try contains patterns
+            if (nextBtn == null) nextBtn = service.findByDesc(root, Regex("পরের\\s*ধাপে|পরের\\s*ধাপে\\s*যেতে|Next|Continue|পরবর্তী", RegexOption.IGNORE_CASE))
+
+            // 3) Fallback: look for clickable Button/ImageView/View with desc/text containing 'পরের' AND 'ধাপে'
+            if (nextBtn == null) {
+                nextBtn = service.findFirst(root) { n ->
+                    try {
+                        val cls = n.className?.toString() ?: ""
+                        val d = (n.contentDescription ?: "").toString()
+                        val t = (n.text ?: "").toString()
+                        // Accept Buttons and clickable Views
+                        val okClass = cls.contains("Button", true) || cls.contains("ImageView", true) || cls.contains("View", true)
+                        okClass && ( (d.contains("পরের", true) && d.contains("ধাপে", true)) || (t.contains("পরের", true) && t.contains("ধাপে", true)) )
+                    } catch (_: Throwable) { false }
+                }
+            }
+
+            if (nextBtn == null) {
+                Log.d(TAG, "clickNextButtonIfPresent: Next button not found")
+                return false
+            }
+
+            Log.d(TAG, "clickNextButtonIfPresent: nextBtn found class=${nextBtn.className} text='${nextBtn.text}' desc='${nextBtn.contentDescription}'")
+
+            // Try helper click first (preferred)
+            try {
+                val clickedNext = service.clickSelfOrAncestor(nextBtn, 4)
+                if (clickedNext) {
+                    Log.d(TAG, "Clicked Next button via clickSelfOrAncestor")
+                    service.waitMs(600)
+                    val after = service.rootInActiveWindow
+                    if (after != null) { logNodeTree(after, 0); logCandidateTilesForDebug(after, service) }
+                    // try confirm overlay
+                    clickConfirmNumberIfPresent(after, service)
+                    return true
+                }
+            } catch (_: Throwable) { /* ignore helper errors */ }
+
+            // Direct performAction
+            val direct = try { nextBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK) } catch (_: Throwable) { false }
+            if (direct) {
+                Log.d(TAG, "Clicked Next button via performAction")
+                service.waitMs(600)
+                val after2 = service.rootInActiveWindow
+                if (after2 != null) { logNodeTree(after2, 0); logCandidateTilesForDebug(after2, service) }
+                clickConfirmNumberIfPresent(after2, service)
+                return true
+            }
+
+            // Click clickable ancestor
+            var cur: AccessibilityNodeInfo? = nextBtn
+            var hops = 0
+            while (cur != null && hops < 8) {
+                if (cur.isClickable && cur.isEnabled) {
+                    val pClick = try { cur.performAction(AccessibilityNodeInfo.ACTION_CLICK) } catch (_: Throwable) { false }
+                    Log.d(TAG, "Attempted click on Next ancestor hop=$hops -> result=$pClick")
+                    if (pClick) {
+                        service.waitMs(600)
+                        val after3 = service.rootInActiveWindow
+                        if (after3 != null) { logNodeTree(after3, 0); logCandidateTilesForDebug(after3, service) }
+                        clickConfirmNumberIfPresent(after3, service)
+                        return true
+                    }
+                }
+                cur = cur.parent
+                hops++
+            }
+
+            // Final fallback: tap at bounds using gesture (API >= 24)
+            val tapped = performTapAtBounds(service, nextBtn)
+            if (tapped) {
+                Log.d(TAG, "Tapped Next button by dispatchGesture fallback")
+                service.waitMs(600)
+                val after4 = service.rootInActiveWindow
+                if (after4 != null) { logNodeTree(after4, 0); logCandidateTilesForDebug(after4, service) }
+                clickConfirmNumberIfPresent(after4, service)
+                return true
+            }
+
+            Log.w(TAG, "clickNextButtonIfPresent: failed to click Next button even though found")
+            return false
+        } catch (t: Throwable) {
+            Log.w(TAG, "clickNextButtonIfPresent failed: ${t.message}", t)
+            return false
+        }
+    }
+
     // ---------- logging helpers ----------
     private fun logPinArea(pinRoot: AccessibilityNodeInfo?, service: ScanUIService, maxAncestor: Int = 6, maxDepth: Int = 6) {
         if (pinRoot == null) {
@@ -922,381 +1288,6 @@ object BkashSendMoneyAction : ServiceAction {
             } catch (_: Throwable) { /* ignore inaccessible nodes */ }
         }
         return false
-    }
-
-    private fun clickNextButtonIfPresent(root: AccessibilityNodeInfo, service: ScanUIService): Boolean {
-        var nextBtn: AccessibilityNodeInfo? = service.findByDesc(root, Regex("^পরের\\s*ধাপে\\s*যেতে\\s*ট্যাপ\\s*করুন\$", RegexOption.IGNORE_CASE))
-        if (nextBtn == null) nextBtn = service.findByDesc(root, Regex("পরের\\s*ধাপে|Next|Continue|পরবর্তী", RegexOption.IGNORE_CASE))
-        if (nextBtn == null) {
-            nextBtn = service.findFirst(root) { n ->
-                val cls = n.className?.toString() ?: ""
-                if (!(cls.contains("Button", true) || cls.contains("ImageView", true) || cls.contains("View", true))) return@findFirst false
-                val d = (n.contentDescription ?: "").toString()
-                val t = (n.text ?: "").toString()
-                (d.contains("পরের", true) && d.contains("ধাপে", true)) || (t.contains("পরের", true) && t.contains("ধাপে", true))
-            }
-        }
-        if (nextBtn != null) {
-            val clickedNext = service.clickSelfOrAncestor(nextBtn, 4)
-            if (clickedNext) {
-                Log.d(TAG, "Clicked Next button (desc='${nextBtn.contentDescription}' text='${nextBtn.text}')")
-                service.waitMs(600)
-                val after = service.rootInActiveWindow
-                if (after != null) { logNodeTree(after, 0); logCandidateTilesForDebug(after, service) }
-                clickConfirmNumberIfPresent(after, service)
-                return true
-            } else {
-                val direct = try { nextBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK) } catch (_: Throwable) { false }
-                if (direct) {
-                    service.waitMs(600)
-                    val after2 = service.rootInActiveWindow
-                    if (after2 != null) { logNodeTree(after2, 0); logCandidateTilesForDebug(after2, service) }
-                    clickConfirmNumberIfPresent(after2, service)
-                    return true
-                }
-            }
-        }
-        return false
-    }
-
-    private fun clickConfirmNumberIfPresent(root: AccessibilityNodeInfo?, service: ScanUIService): Boolean {
-        if (root == null) return false
-        try {
-            val confirmRegex = Regex("হ্যাঁ[,\\s]*নাম্বারটি\\s*সঠিক", RegexOption.IGNORE_CASE)
-            var node = service.findByDesc(root, confirmRegex)
-            if (node == null) {
-                node = service.findFirst(root) { n ->
-                    val desc = (n.contentDescription ?: "").toString()
-                    desc.contains("হ্যাঁ", true) && desc.contains("নাম্বারটি", true) && desc.contains("সঠিক", true)
-                }
-            }
-            if (node == null) {
-                node = service.findFirst(root) { n ->
-                    val cls = n.className?.toString() ?: ""
-                    val desc = (n.contentDescription ?: "").toString()
-                    cls.contains("ImageView", true) && desc.contains("নাম्बার", true) && desc.contains("সঠিক", true)
-                }
-            }
-            if (node == null) {
-                Log.d(TAG, "Confirmation node ('হ্যাঁ, নাম্বারটি সঠিক') not found on this root")
-                return false
-            }
-            val clicked = service.clickSelfOrAncestor(node, 4)
-            if (clicked) {
-                Log.d(TAG, "Clicked confirm-number node (desc='${node.contentDescription}')")
-                service.waitMs(450)
-                val after = service.rootInActiveWindow
-                if (after != null) { logNodeTree(after, 0); logCandidateTilesForDebug(after, service) }
-                return true
-            }
-            var p: AccessibilityNodeInfo? = node
-            var hops = 0
-            while (p != null && hops < 6) {
-                val res = try { p.performAction(AccessibilityNodeInfo.ACTION_CLICK) } catch (_: Throwable) { false }
-                if (res) {
-                    Log.d(TAG, "Clicked confirmation by performAction at hop=$hops")
-                    service.waitMs(450)
-                    val after2 = service.rootInActiveWindow
-                    if (after2 != null) { logNodeTree(after2, 0); logCandidateTilesForDebug(after2, service) }
-                    return true
-                }
-                p = p.parent
-                hops++
-            }
-            Log.w(TAG, "Failed to click confirmation node even though it was found")
-            return false
-        } catch (t: Throwable) {
-            Log.w(TAG, "clickConfirmNumberIfPresent failed: ${t.message}", t)
-            return false
-        }
-    }
-
-    private fun findSearchField(newRoot: AccessibilityNodeInfo, service: ScanUIService): AccessibilityNodeInfo? {
-        var searchField: AccessibilityNodeInfo? = service.findFirst(newRoot) { n ->
-            try {
-                val cls = n.className?.toString() ?: ""
-                if (!cls.contains("EditText", true)) return@findFirst false
-                val hint = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) (n.hintText ?: "") else "")?.toString() ?: ""
-                val desc = (n.contentDescription ?: "").toString()
-                val text = (n.text ?: "").toString()
-                (hint.contains("নাম", true) || hint.contains("নাম্বার", true)
-                        || desc.contains("নাম", true) || desc.contains("নাম্বার", true)
-                        || text.contains("নাম", true) || text.contains("নাম্বার", true))
-            } catch (_: Throwable) { false }
-        }
-        if (searchField == null) {
-            searchField = service.findFirst(newRoot) { n ->
-                try {
-                    val id = try { n.viewIdResourceName ?: "" } catch (_: Throwable) { "" }
-                    val cls = n.className?.toString() ?: ""
-                    (cls.contains("EditText", true) && (id.contains("search", true) || id.contains("name", true) || id.contains("number", true)))
-                } catch (_: Throwable) { false }
-            }
-        }
-        if (searchField == null) {
-            searchField = service.findFirst(newRoot) { it.className?.contains("EditText", true) == true }
-        }
-        return searchField
-    }
-
-    // ---------- Improved long-press implementation ----------
-    /**
-     * Performs a more robust long-press gesture that's better recognized by apps
-     */
-    private fun performRobustLongPress(service: ScanUIService, x: Float, y: Float): Boolean {
-        val acc = try { service as AccessibilityService } catch (_: Throwable) { return false }
-
-        // Check if the service can perform gestures
-        try {
-            val canPerform = try {
-                val m = AccessibilityService::class.java.getMethod("canPerformGestures")
-                (m.invoke(acc) as? Boolean) ?: true
-            } catch (_: NoSuchMethodException) {
-                true
-            } catch (t: Throwable) {
-                Log.w(TAG, "performRobustLongPress: reflection check failed: ${t.message}")
-                true
-            }
-            if (!canPerform) {
-                Log.w(TAG, "performRobustLongPress: service reports cannot perform gestures")
-                return false
-            }
-        } catch (_: Throwable) {}
-
-        try {
-            Log.d(TAG, "performRobustLongPress: at ($x,$y)")
-
-            // Create a multi-step gesture that's more likely to be recognized
-            // 1. Initial tap down
-            val downPath = Path()
-            downPath.moveTo(x, y)
-            val downStroke = GestureDescription.StrokeDescription(downPath, 0, 50)
-
-            // 2. Small movement to indicate it's not just a tap
-            val movePath = Path()
-            movePath.moveTo(x, y)
-            movePath.lineTo(x + 1f, y + 1f)
-            val moveStroke = GestureDescription.StrokeDescription(movePath, 50, 100)
-
-            // 3. Hold for longer duration
-            val holdPath = Path()
-            holdPath.moveTo(x + 1f, y + 1f)
-            holdPath.lineTo(x + 1f, y + 1f)
-            val holdStroke = GestureDescription.StrokeDescription(holdPath, 150, 2000, true)
-
-            // Combine all strokes
-            val gesture = GestureDescription.Builder()
-                .addStroke(downStroke)
-                .addStroke(moveStroke)
-                .addStroke(holdStroke)
-                .build()
-
-            val latch = CountDownLatch(1)
-            var success = false
-            var result = "unknown"
-            val callback = object : AccessibilityService.GestureResultCallback() {
-                override fun onCompleted(g: GestureDescription?) {
-                    success = true
-                    result = "completed"
-                    latch.countDown()
-                }
-                override fun onCancelled(g: GestureDescription?) {
-                    success = false
-                    result = "cancelled"
-                    latch.countDown()
-                }
-            }
-
-            val dispatched = try {
-                acc.dispatchGesture(gesture, callback, Handler(Looper.getMainLooper()))
-            } catch (t: Throwable) {
-                Log.w(TAG, "performRobustLongPress: dispatchGesture threw: ${t.message}", t)
-                false
-            }
-            Log.d(TAG, "performRobustLongPress: dispatchGesture returned -> $dispatched")
-
-            if (!dispatched) {
-                Log.w(TAG, "performRobustLongPress: dispatch returned false")
-                return false
-            }
-
-            val awaited = latch.await(5, TimeUnit.SECONDS)
-            Log.d(TAG, "performRobustLongPress: callback fired? $awaited result=$result success=$success")
-            return success
-        } catch (t: Throwable) {
-            Log.w(TAG, "performRobustLongPress failed: ${t.message}", t)
-            return false
-        }
-    }
-
-    // Call this with the pinkBanner node (or null to try screen bottom)
-    private fun performExhaustiveLongPress(service: ScanUIService, node: AccessibilityNodeInfo?, preferX: Float? = null, preferY: Float? = null): Boolean {
-        // 1) Try semantic long-click first (cheap)
-        try {
-            if (node != null) {
-                // Try ACTION_LONG_CLICK constant if available
-                val ACTION_LONG_CLICK = try {
-                    AccessibilityNodeInfo::class.java.getField("ACTION_LONG_CLICK").getInt(null)
-                } catch (_: Throwable) { 16 }
-                if (node.isLongClickable) {
-                    try { if (node.performAction(ACTION_LONG_CLICK)) return true } catch (_: Throwable) {}
-                }
-                // Also try semantic long-click on ancestors
-                var cur: AccessibilityNodeInfo? = node
-                var hops = 0
-                while (cur != null && hops < 12) {
-                    try {
-                        if (cur.isClickable && cur.isEnabled) {
-                            val ok = try { cur.performAction(ACTION_LONG_CLICK) } catch (_: Throwable) { false }
-                            if (ok) return true
-                        }
-                    } catch (_: Throwable) {}
-                    cur = cur.parent
-                    hops++
-                }
-            }
-        } catch (_: Throwable) {}
-
-        // 2) Try a normal semantic click (some UIs react to click+hold pattern)
-        try {
-            if (node != null) {
-                val clicked = try { node.performAction(AccessibilityNodeInfo.ACTION_CLICK) } catch (_: Throwable) { false }
-                if (clicked) {
-                    // short wait and then attempt long-press again
-                    try { Thread.sleep(180) } catch (_: InterruptedException) {}
-                }
-            }
-        } catch (_: Throwable) {}
-
-        // 3) Use dispatchGesture robustly with multiple variants: center, small offsets, 4s duration
-        val acc = try { service as AccessibilityService } catch (_: Throwable) { null } ?: return false
-        val dm = acc.resources.displayMetrics
-        val w = dm.widthPixels.toFloat()
-        val h = dm.heightPixels.toFloat()
-
-        val baseX = preferX ?: run {
-            if (node != null) {
-                val r = Rect()
-                try { node.getBoundsInScreen(r) } catch (_: Throwable) { }
-                if (!r.isEmpty) return@run (r.left + r.right) / 2f
-            }
-            w / 2f
-        }
-        val baseY = preferY ?: run {
-            if (node != null) {
-                val r = Rect()
-                try { node.getBoundsInScreen(r) } catch (_: Throwable) { }
-                if (!r.isEmpty) return@run (r.top + r.bottom) / 2f
-            }
-            h * 0.88f
-        }
-
-        // offsets to try: center and small grid (0, +/-10, +/-20 px)
-        val offsets = listOf(0f, 10f, -10f, 20f, -20f)
-        val durationsMs = listOf(5500L, 6000L, 6500L) // try a few durations
-
-        for (dur in durationsMs) {
-            for (dx in offsets) {
-                for (dy in offsets) {
-                    val tx = baseX + dx
-                    val ty = baseY + dy
-                    Log.d(TAG, "Exhaustive long-press attempt at ($tx,$ty) duration=${dur}ms")
-                    if (performSingleStrokeGesture(acc, tx, ty, dur)) {
-                        Log.d(TAG, "Exhaustive long-press succeeded at ($tx,$ty) dur=$dur")
-                        return true
-                    }
-                    // slight pause between attempts
-                    try { Thread.sleep(180) } catch (_: InterruptedException) {}
-                }
-            }
-        }
-
-        // 4) As last resort, try the semantic long-click one more time on ancestors
-        if (node != null) {
-            var cur2: AccessibilityNodeInfo? = node
-            var hops2 = 0
-            while (cur2 != null && hops2 < 12) {
-                try {
-                    if (cur2.isClickable && cur2.isEnabled) {
-                        val ok = try { cur2.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK) } catch (_: Throwable) { false }
-                        if (ok) return true
-                    }
-                } catch (_: Throwable) {}
-                cur2 = cur2.parent
-                hops2++
-            }
-        }
-
-        return false
-    }
-
-    /** single continuous stroke helper — returns true if onCompleted callback fired */
-    private fun performSingleStrokeGesture(acc: AccessibilityService, x: Float, y: Float, durationMs: Long): Boolean {
-        Log.d("BKASH_ACTION","Entering duration: $durationMs $acc")
-
-        return try {
-            Log.d(TAG,"duration: $durationMs $acc")
-            val path = Path().apply { moveTo(x, y) }
-            val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs)
-            val gesture = GestureDescription.Builder().addStroke(stroke).build()
-
-            val latch = CountDownLatch(1)
-            var success = false
-            val callback = object : AccessibilityService.GestureResultCallback() {
-                override fun onCompleted(g: GestureDescription?) {
-                    success = true; latch.countDown()
-                    Log.d("BKASH_ACTION","action Completed")
-                }
-
-                override fun onCancelled(g: GestureDescription?) {
-                    success = false; latch.countDown()
-
-                    Log.d("BKASH_ACTION","action cancelled")
-                }
-            }
-            Log.d("BKASH_ACTION","callback invoced")
-            val dispatched = try {
-                Log.d("BKASH_ACTION","action Dispatched")
-                acc.dispatchGesture(gesture, callback, Handler(Looper.getMainLooper()))
-            } catch (t: Throwable) {
-                Log.w(TAG, "dispatchGesture threw: ${t.message}")
-                Log.d("BKASH_ACTION","action Dispatch failed: $t")
-                false
-            }
-            Log.d("BKASH_ACTION","dispatch returned: $dispatched")
-            if (!dispatched) return false
-            Log.d("BKASH_ACTION","dispatcher passed: $dispatched")
-            // wait a bit more than duration to allow callback
-            val waited = latch.await((durationMs / 1000L) + 3L, TimeUnit.SECONDS)
-            Log.d(TAG, "performSingleStrokeGesture: dispatched=$dispatched callbackFired=$waited success=$success")
-            success
-        } catch (t: Throwable) {
-            Log.d("BKASH_ACTION","action GLOBAL failed: $t")
-            Log.w(TAG, "performSingleStrokeGesture failed: ${t.message}", t)
-            false
-        }
-    }
-
-    // ---------- Debug helper for bottom nodes ----------
-    private fun logNodesAtBottom(service: ScanUIService) {
-        val root = service.rootInActiveWindow ?: return
-        val height = service.resources.displayMetrics.heightPixels
-        val thresholdY = height * 0.75f
-
-        val hits = mutableListOf<String>()
-        fun traverse(n: AccessibilityNodeInfo) {
-            val r = Rect()
-            try { n.getBoundsInScreen(r) } catch (_: Throwable) { return }
-            if (r.bottom >= thresholdY && r.height() > 40) {
-                hits.add("Y=${r.bottom} h=${r.height()} cls=${n.className} text='${n.text}' desc='${n.contentDescription}'")
-            }
-            for (i in 0 until n.childCount) {
-                val c = try { n.getChild(i) } catch (_: Throwable) { null } ?: continue
-                traverse(c)
-            }
-        }
-        traverse(root)
-        Log.d(TAG, "BOTTOM NODES (Y>=$thresholdY): ${hits.joinToString(" | ")}")
     }
 
     // ---------- dumpClickableNodesBounds ----------

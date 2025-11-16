@@ -55,10 +55,10 @@ class MainActivity : AppCompatActivity() {
 
             ScannerHelper.targetPin = pin
             ScannerHelper.searchQuery = query
-            openBkash()
+            openApp("com.bKash.customerapp")
         }
 
-        binding.openBkashSendMoney.setOnClickListener {
+        binding.openNagadSendMoney.setOnClickListener {
             val pin = binding.targetPin.text.toString() ?: ""
             val query = binding.searchQuery.text.toString() ?: ""
 
@@ -67,12 +67,29 @@ class MainActivity : AppCompatActivity() {
 
             ScannerHelper.flowForService = Flow.SEND_MONEY
 
-            ScannerHelper.recipientNumber = "01920648162"
-            ScannerHelper.refs = "greiugh"
+            ScannerHelper.recipientNumber = binding.number.text.toString()
+            ScannerHelper.refs = binding.ref.text.toString()
 
-            ScannerHelper.amount = "1"
+            ScannerHelper.amount = binding.etAmount.text.toString()
+            openApp("com.konasl.nagad")
+        }
 
-            openBkash()
+        binding.openBkashSendMoney.setOnClickListener {
+
+            val pin = binding.targetPin.text.toString() ?: ""
+            val query = binding.searchQuery.text.toString() ?: ""
+
+            ScannerHelper.targetPin = pin
+            ScannerHelper.searchQuery = query
+
+            ScannerHelper.flowForService = Flow.SEND_MONEY
+
+            ScannerHelper.recipientNumber = binding.number.text.toString()
+            ScannerHelper.refs = binding.ref.text.toString()
+
+            ScannerHelper.amount = binding.etAmount.text.toString()
+
+            openApp("com.bKash.customerapp")
         }
 
         // If the activity was started/reshown by the service with extras:
@@ -111,8 +128,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun openBkash() {
-        val pkg = "com.bKash.customerapp" // case-sensitive
+    private fun openApp(pkg: String) {
 
         // 1) Try normal launcher intent
         packageManager.getLaunchIntentForPackage(pkg)?.let { launch ->

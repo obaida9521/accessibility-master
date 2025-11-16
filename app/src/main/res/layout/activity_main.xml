@@ -12,7 +12,34 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:id="@+id/targetPin"
+        android:inputType="number"
         android:hint="Enter target PIN"
+        android:imeOptions="actionNext"
+        />
+
+    <EditText
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:id="@+id/number"
+        android:hint="Enter recipient Number"
+        android:inputType="number"
+        android:imeOptions="actionNext"
+        />
+
+    <EditText
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:id="@+id/etAmount"
+        android:inputType="number"
+        android:hint="Enter Amount"
+        android:imeOptions="actionNext"
+        />
+
+    <EditText
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:id="@+id/ref"
+        android:hint="Enter refs"
         />
 
     <EditText
@@ -20,6 +47,7 @@
         android:layout_height="wrap_content"
         android:id="@+id/searchQuery"
         android:hint="Enter trxId"
+        android:visibility="gone"
         />
 
     <Button
@@ -27,6 +55,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Open bKash"
+        android:visibility="gone"
         />
 
 
@@ -36,4 +65,12 @@
         android:layout_height="wrap_content"
         android:text="Open bKash Send money"
         />
+
+    <Button
+        android:id="@+id/openNagadSendMoney"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Open Nagad Send money"
+        />
+
 </LinearLayout>

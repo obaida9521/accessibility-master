@@ -28,6 +28,7 @@
 
     <queries>
         <package android:name="com.bKash.customerapp"/>
+        <package android:name="com.konasl.nagad"/>
     </queries>
 
     <application

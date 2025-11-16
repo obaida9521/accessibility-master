@@ -16,7 +16,9 @@ import com.developerobaida.accessibilitymaster.Services.actions.BkashSendMoneyAc
 
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
+import android.graphics.Rect
 import android.util.DisplayMetrics
+import com.developerobaida.accessibilitymaster.Services.actions.NagadSendMoneyAction
 
 class ScanUIService : AccessibilityService() {
 
@@ -25,7 +27,7 @@ class ScanUIService : AccessibilityService() {
     /* ======= Tunables ======= */
     private var firstActionDuration: Long = 1000L
     private var duration: Long = 1000L
-    private val targetPkgs = setOf("com.bKash.customerapp")
+    private val targetPkgs = setOf("com.bKash.customerapp","com.konasl.nagad")
     private val acceptPhoneNumberMatch = false
     /* ======================== */
 
@@ -57,6 +59,7 @@ class ScanUIService : AccessibilityService() {
 
             // inside ScanUIService or some init block
             ServiceRegistry.register("com.bKash.customerapp", Flow.SEND_MONEY, BkashSendMoneyAction)
+            ServiceRegistry.register("com.konasl.nagad", Flow.SEND_MONEY, NagadSendMoneyAction)
 
         }
         serviceInfo = info
@@ -510,6 +513,70 @@ class ScanUIService : AccessibilityService() {
     fun findAnyDesc(root: AccessibilityNodeInfo, patterns: List<Regex>): AccessibilityNodeInfo? {
         for (p in patterns) findByDesc(root, p)?.let { return it }
         return null
+    }
+
+
+    fun logCandidateTilesForDebug(root: AccessibilityNodeInfo, service: ScanUIService) {
+        val found = mutableListOf<String>()
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        stack.add(root)
+        while (stack.isNotEmpty()) {
+            val cur = stack.removeLast()
+            try {
+                val cls = cur.className?.toString() ?: ""
+                val text = (cur.text ?: "").toString().replace("\n", " ").trim()
+                val desc = (cur.contentDescription ?: "").toString().replace("\n", " ").trim()
+                val id = try { cur.viewIdResourceName ?: "" } catch (_: Throwable) { "" }
+                if ((cur.isClickable || cur.isFocusable) && (text.isNotEmpty() || desc.isNotEmpty() || id.isNotEmpty())) {
+                    found.add("[cls=$cls] text='$text' desc='$desc' id='$id' clickable=${cur.isClickable}")
+                }
+                for (i in 0 until cur.childCount) {
+                    val child = try { cur.getChild(i) } catch (_: Throwable) { null }
+                    if (child != null) stack.add(child)
+                }
+            } catch (_: Throwable) {}
+        }
+        Log.d(TAG, "Candidate tiles count=${found.size}")
+        found.take(200).forEachIndexed { idx, s -> Log.d(TAG, "Candidate[$idx]: $s") }
+    }
+
+
+    fun dumpClickableNodesBounds(service: ScanUIService) {
+        try {
+            val root = service.rootInActiveWindow ?: return
+            val stack = ArrayDeque<AccessibilityNodeInfo>()
+            stack.add(root)
+            val out = mutableListOf<String>()
+            while (stack.isNotEmpty()) {
+                val n = stack.removeFirst()
+                try {
+                    val cls = n.className?.toString() ?: "null"
+                    val desc = (n.contentDescription ?: "").toString().replace("\n", " ").trim()
+                    val txt = (n.text ?: "").toString().replace("\n", " ").trim()
+                    val id = try { n.viewIdResourceName ?: "" } catch (_: Throwable) { "" }
+                    val r = Rect()
+                    n.getBoundsInScreen(r)
+                    val bounds = if (r.isEmpty) "<empty>" else "(${r.left},${r.top})-(${r.right},${r.bottom})"
+                    val flags = buildString {
+                        if (n.isClickable) append("clickable ")
+                        if (n.isFocusable) append("focusable ")
+                        if (n.isEnabled) append("enabled ")
+                    }.trim()
+                    if (flags.isNotEmpty()) {
+                        out.add("[${cls}] bounds=$bounds flags='$flags' id='$id' desc='$desc' text='$txt'")
+                    }
+                } catch (_: Throwable) {}
+                for (i in 0 until n.childCount) {
+                    val c = try { n.getChild(i) } catch (_: Throwable) { null }
+                    if (c != null) stack.add(c)
+                }
+            }
+            Log.d(TAG, "=== CLICKABLE NODES DUMP START ===")
+            out.sortedBy { it }.forEachIndexed { i, s -> Log.d(TAG, "Clickable[$i]: $s") }
+            Log.d(TAG, "=== CLICKABLE NODES DUMP END ===")
+        } catch (t: Throwable) {
+            Log.w(TAG, "dumpClickableNodesBounds failed: ${t.message}", t)
+        }
     }
 
 
